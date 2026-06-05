@@ -137,7 +137,7 @@
     .ex-row.checked .ex-check-icon { background: var(--green); border-color: var(--green); color: #fff; }
     .ex-name { font-size: 14px; font-weight: 500; flex: 1; min-width: 0; }
     .ex-prev { font-size: 10px; color: var(--muted); flex-shrink: 0; text-align: right; line-height: 1.4; }
-    .ex-inputs { display: none; gap: 12px; padding: 0 16px 14px 56px; }
+    .ex-inputs { display: none; gap: 12px; padding: 0 16px 14px 56px; flex-wrap: wrap; }
     .ex-inputs.open { display: flex; }
     .input-group { display: flex; flex-direction: column; gap: 4px; align-items: center; }
     .input-label { font-size: 10px; color: var(--muted); }
@@ -223,6 +223,11 @@
     /* empty */
     .empty { text-align: center; color: var(--muted); font-size: 14px; padding: 36px 0; }
     .empty-icon { font-size: 38px; display: block; margin-bottom: 8px; }
+
+    /* level up */
+    .levelup-badge { display: inline-block; font-size: 10px; background: rgba(245,158,11,0.18); color: #F59E0B; border: 1px solid rgba(245,158,11,0.35); border-radius: 8px; padding: 2px 7px; margin-left: 6px; vertical-align: middle; white-space: nowrap; }
+    .levelup-check { width: 100%; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #F59E0B; cursor: pointer; margin-top: 4px; }
+    .levelup-check input[type="checkbox"] { accent-color: #F59E0B; width: 15px; height: 15px; flex-shrink: 0; }
 
     /* daily summary */
     .daily-summary { display: none; margin-bottom: 10px; background: linear-gradient(135deg, rgba(124,111,255,0.12), rgba(16,185,129,0.08)); border: 1px solid rgba(124,111,255,0.28); border-radius: 14px; padding: 12px 14px; }
@@ -553,6 +558,7 @@
 
     // Load previous values for pre-fill (last 10 sessions before this date)
     var prevLogs = {};
+    var prevLevelupFlags = {};
     var sessR = await db.from('workout_sessions').select('id, date')
       .lt('date', dateStr).order('date', { ascending: false }).limit(10);
     var prevSessions = sessR.data || [];
@@ -561,18 +567,23 @@
       var logsR = await db.from('workout_logs').select('*').in('session_id', ids);
       var sessOrder = {};
       prevSessions.forEach(function(s, i) { sessOrder[s.id] = i; });
+      var prevSessId = prevSessions[0].id;
       (logsR.data || []).forEach(function(l) {
         if (!prevLogs[l.exercise_id] || sessOrder[l.session_id] < sessOrder[prevLogs[l.exercise_id].session_id]) {
           prevLogs[l.exercise_id] = l;
         }
+        if (l.session_id === prevSessId && l.levelup_flag) {
+          prevLevelupFlags[l.exercise_id] = true;
+        }
       });
     }
 
-    renderSheetBody(existingLogs, prevLogs);
+    renderSheetBody(existingLogs, prevLogs, prevLevelupFlags);
     updateSummary();
   }
 
-  function renderSheetBody(existing, prev) {
+  function renderSheetBody(existing, prev, levelupFlags) {
+    levelupFlags = levelupFlags || {};
     var html = '';
     exercises.forEach(function(ex) {
       var log  = existing[ex.id];
@@ -582,6 +593,8 @@
       var reps = log ? log.reps : (last ? last.reps : ex.default_reps);
       var sets = log ? log.sets : (last ? last.sets : ex.default_sets);
       var km   = log ? log.km   : (last ? last.km   : null);
+      var savedLevelup = log && log.levelup_flag;
+      var showLevelupBadge = !ex.is_cardio && !!levelupFlags[ex.id];
 
       var prevStr = '';
       if (ex.is_cardio) {
@@ -593,7 +606,7 @@
       html += '<div class="ex-row' + (checked ? ' checked' : '') + '" id="exrow-' + ex.id + '">';
       html += '<div class="ex-row-head" onclick="toggleEx(\'' + ex.id + '\')">';
       html += '<div class="ex-check-icon" id="exchk-' + ex.id + '">✓</div>';
-      html += '<div class="ex-name">' + esc(ex.name) + '</div>';
+      html += '<div class="ex-name">' + esc(ex.name) + (showLevelupBadge ? '<span class="levelup-badge">⬆️ 前回UP可</span>' : '') + '</div>';
       if (prevStr) html += '<div class="ex-prev">前回 ' + esc(prevStr) + '</div>';
       html += '</div>';
       html += '<div class="ex-inputs' + (checked ? ' open' : '') + '" id="exinp-' + ex.id + '">';
@@ -603,6 +616,7 @@
         html += '<div class="input-group"><div class="input-label">重量</div><input type="number" step="0.5" class="input-field" id="kg-' + ex.id + '" value="' + (kg != null ? kg : '') + '" oninput="updateSummary()"><div class="input-unit">kg</div></div>';
         html += '<div class="input-group"><div class="input-label">回数</div><input type="number" step="1" class="input-field" id="reps-' + ex.id + '" value="' + (reps != null ? reps : '') + '" oninput="updateSummary()"><div class="input-unit">回</div></div>';
         html += '<div class="input-group"><div class="input-label">セット</div><input type="number" step="1" class="input-field" id="sets-' + ex.id + '" value="' + (sets != null ? sets : '') + '" oninput="updateSummary()"><div class="input-unit">set</div></div>';
+        html += '<label class="levelup-check"><input type="checkbox" id="lu-' + ex.id + '"' + (savedLevelup ? ' checked' : '') + '> 次回もっと重くいける</label>';
       }
       html += '</div></div>';
     });
@@ -652,6 +666,8 @@
         log.kg   = parseFloat((document.getElementById('kg-'   + ex.id) || {}).value) || null;
         log.reps = parseInt( (document.getElementById('reps-'  + ex.id) || {}).value) || null;
         log.sets = parseInt( (document.getElementById('sets-'  + ex.id) || {}).value) || null;
+        var luEl = document.getElementById('lu-' + ex.id);
+        log.levelup_flag = luEl ? luEl.checked : false;
       }
       return log;
     });
