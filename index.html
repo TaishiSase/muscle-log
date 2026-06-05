@@ -224,6 +224,15 @@
     .empty { text-align: center; color: var(--muted); font-size: 14px; padding: 36px 0; }
     .empty-icon { font-size: 38px; display: block; margin-bottom: 8px; }
 
+    /* daily summary */
+    .daily-summary { display: none; margin-bottom: 10px; background: linear-gradient(135deg, rgba(124,111,255,0.12), rgba(16,185,129,0.08)); border: 1px solid rgba(124,111,255,0.28); border-radius: 14px; padding: 12px 14px; }
+    .daily-summary.visible { display: block; }
+    .ds-title { font-size: 11px; font-weight: 700; color: #b0a8ff; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+    .ds-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+    .ds-val { font-size: 19px; font-weight: 700; color: var(--text); min-width: 100px; line-height: 1.2; }
+    .ds-eq { font-size: 13px; color: #10B981; line-height: 1.4; }
+    .ds-next { font-size: 11px; color: var(--muted); margin-left: 4px; margin-bottom: 8px; }
+
     /* spinner */
     .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -343,6 +352,7 @@
   </div>
   <div class="sheet-body" id="sheetBody"></div>
   <div class="sheet-footer">
+    <div class="daily-summary" id="dailySummary"></div>
     <button class="btn btn-primary" onclick="saveSession()">💾 保存する</button>
   </div>
 </div>
@@ -559,6 +569,7 @@
     }
 
     renderSheetBody(existingLogs, prevLogs);
+    updateSummary();
   }
 
   function renderSheetBody(existing, prev) {
@@ -587,11 +598,11 @@
       html += '</div>';
       html += '<div class="ex-inputs' + (checked ? ' open' : '') + '" id="exinp-' + ex.id + '">';
       if (ex.is_cardio) {
-        html += '<div class="input-group"><div class="input-label">距離</div><input type="number" step="0.1" class="input-field" id="km-' + ex.id + '" value="' + (km != null ? km : '') + '"><div class="input-unit">km</div></div>';
+        html += '<div class="input-group"><div class="input-label">距離</div><input type="number" step="0.1" class="input-field" id="km-' + ex.id + '" value="' + (km != null ? km : '') + '" oninput="updateSummary()"><div class="input-unit">km</div></div>';
       } else {
-        html += '<div class="input-group"><div class="input-label">重量</div><input type="number" step="0.5" class="input-field" id="kg-' + ex.id + '" value="' + (kg != null ? kg : '') + '"><div class="input-unit">kg</div></div>';
-        html += '<div class="input-group"><div class="input-label">回数</div><input type="number" step="1" class="input-field" id="reps-' + ex.id + '" value="' + (reps != null ? reps : '') + '"><div class="input-unit">回</div></div>';
-        html += '<div class="input-group"><div class="input-label">セット</div><input type="number" step="1" class="input-field" id="sets-' + ex.id + '" value="' + (sets != null ? sets : '') + '"><div class="input-unit">set</div></div>';
+        html += '<div class="input-group"><div class="input-label">重量</div><input type="number" step="0.5" class="input-field" id="kg-' + ex.id + '" value="' + (kg != null ? kg : '') + '" oninput="updateSummary()"><div class="input-unit">kg</div></div>';
+        html += '<div class="input-group"><div class="input-label">回数</div><input type="number" step="1" class="input-field" id="reps-' + ex.id + '" value="' + (reps != null ? reps : '') + '" oninput="updateSummary()"><div class="input-unit">回</div></div>';
+        html += '<div class="input-group"><div class="input-label">セット</div><input type="number" step="1" class="input-field" id="sets-' + ex.id + '" value="' + (sets != null ? sets : '') + '" oninput="updateSummary()"><div class="input-unit">set</div></div>';
       }
       html += '</div></div>';
     });
@@ -603,6 +614,7 @@
     var inp = document.getElementById('exinp-' + exId);
     var on  = row.classList.toggle('checked');
     inp.classList.toggle('open', on);
+    updateSummary();
   }
 
   async function saveSession() {
@@ -904,6 +916,112 @@
     await db.from('exercises').delete().eq('id', id);
     await loadExercises();
     renderManage();
+  }
+
+  // ===== DAILY SUMMARY =====
+  var FOOD_TABLE = [
+    { kcal: 15,  emoji: '🍬', name: 'あめ玉1個' },
+    { kcal: 30,  emoji: '☕', name: 'ブラックコーヒー1杯' },
+    { kcal: 50,  emoji: '🍊', name: 'みかん1個' },
+    { kcal: 70,  emoji: '🥛', name: '牛乳100ml' },
+    { kcal: 90,  emoji: '🍎', name: 'りんご半分' },
+    { kcal: 110, emoji: '🍌', name: 'バナナ1本' },
+    { kcal: 135, emoji: '🍇', name: 'ぶどう半房' },
+    { kcal: 160, emoji: '🥛', name: '牛乳1杯（200ml）' },
+    { kcal: 190, emoji: '🍙', name: 'おにぎり1個（小）' },
+    { kcal: 215, emoji: '🍞', name: '食パン2枚' },
+    { kcal: 240, emoji: '🍩', name: 'ドーナツ1個' },
+    { kcal: 265, emoji: '🍚', name: 'ご飯茶碗1杯（小）' },
+    { kcal: 295, emoji: '🧁', name: 'カップケーキ1個' },
+    { kcal: 320, emoji: '🍫', name: 'チョコレート板1枚' },
+    { kcal: 345, emoji: '🍰', name: 'ショートケーキ1切れ' },
+    { kcal: 380, emoji: '🍟', name: 'ポテトフライM' },
+    { kcal: 415, emoji: '🍔', name: 'ハンバーガー1個' },
+    { kcal: 455, emoji: '🍜', name: 'ラーメン1杯（小）' },
+    { kcal: 495, emoji: '🍛', name: 'カレーライス1皿' },
+    { kcal: 550, emoji: '🍱', name: '幕の内弁当1個' },
+    { kcal: 620, emoji: '🍕', name: 'ピザ2切れ' },
+    { kcal: 695, emoji: '🥩', name: 'ステーキ150g' },
+    { kcal: 780, emoji: '🍣', name: '寿司10貫' },
+    { kcal: 900, emoji: '🎂', name: 'ホールケーキ1/4' },
+  ];
+
+  var VOLUME_TABLE = [
+    { kg: 80,    emoji: '🎒', unit: '個', name: 'ランドセル' },
+    { kg: 150,   emoji: '🧳', unit: '個', name: 'スーツケース' },
+    { kg: 250,   emoji: '🚲', unit: '台', name: '自転車' },
+    { kg: 400,   emoji: '🏍', unit: '台', name: '原付バイク' },
+    { kg: 600,   emoji: '🏍', unit: '台', name: '大型バイク' },
+    { kg: 800,   emoji: '🐂', unit: '頭', name: '成牛' },
+    { kg: 1000,  emoji: '🚗', unit: '台', name: '軽自動車' },
+    { kg: 1400,  emoji: '🚙', unit: '台', name: 'コンパクトカー' },
+    { kg: 1800,  emoji: '🚐', unit: '台', name: 'ミニバン' },
+    { kg: 2000,  emoji: '🦏', unit: '頭', name: 'シロサイ' },
+    { kg: 3500,  emoji: '🐘', unit: '頭', name: 'アジアゾウ' },
+    { kg: 5000,  emoji: '🚛', unit: '台', name: '5トントラック' },
+    { kg: 6000,  emoji: '🦛', unit: '頭', name: 'カバ' },
+    { kg: 8000,  emoji: '🚌', unit: '台', name: '路線バス' },
+    { kg: 12000, emoji: '🐋', unit: '頭', name: 'シャチ' },
+  ];
+
+  function updateSummary() {
+    var el = document.getElementById('dailySummary');
+    if (!el) return;
+
+    var totalKcal = 0, totalVol = 0;
+    exercises.forEach(function(ex) {
+      var row = document.getElementById('exrow-' + ex.id);
+      if (!row || !row.classList.contains('checked')) return;
+      if (ex.is_cardio) {
+        var km = parseFloat((document.getElementById('km-' + ex.id) || {}).value) || 0;
+        totalKcal += km * 60;
+      } else {
+        var kg   = parseFloat((document.getElementById('kg-'   + ex.id) || {}).value) || 0;
+        var reps = parseInt( (document.getElementById('reps-'  + ex.id) || {}).value) || 0;
+        var sets = parseInt( (document.getElementById('sets-'  + ex.id) || {}).value) || 0;
+        var vol  = kg * reps * sets;
+        totalVol  += vol;
+        totalKcal += vol * 0.025 + sets * 3;
+      }
+    });
+    totalKcal = Math.round(totalKcal);
+    totalVol  = Math.round(totalVol);
+
+    if (totalKcal === 0 && totalVol === 0) {
+      el.className = 'daily-summary'; el.innerHTML = ''; return;
+    }
+
+    el.className = 'daily-summary visible';
+    var html = '<div class="ds-title">💪 今日のがんばり</div>';
+
+    if (totalKcal > 0) {
+      var food = null, nextFood = null;
+      for (var i = 0; i < FOOD_TABLE.length; i++) {
+        if (FOOD_TABLE[i].kcal <= totalKcal) food = FOOD_TABLE[i];
+        else { nextFood = FOOD_TABLE[i]; break; }
+      }
+      html += '<div class="ds-row"><div class="ds-val">🔥 ' + totalKcal.toLocaleString() + ' kcal</div>';
+      if (food) html += '<div class="ds-eq">≒ ' + food.emoji + ' ' + food.name + '</div>';
+      html += '</div>';
+      if (nextFood) html += '<div class="ds-next">あと' + (nextFood.kcal - totalKcal) + ' kcalで ' + nextFood.emoji + ' ' + nextFood.name + '</div>';
+    }
+
+    if (totalVol > 0) {
+      var volItem = null, nextVol = null;
+      for (var j = 0; j < VOLUME_TABLE.length; j++) {
+        if (VOLUME_TABLE[j].kg <= totalVol) volItem = VOLUME_TABLE[j];
+        else { nextVol = VOLUME_TABLE[j]; break; }
+      }
+      html += '<div class="ds-row"><div class="ds-val">🏋️ ' + totalVol.toLocaleString() + ' kg</div>';
+      if (volItem) {
+        var ratio = (totalVol / volItem.kg).toFixed(1);
+        html += '<div class="ds-eq">≒ ' + volItem.emoji + ' ' + volItem.name + ratio + volItem.unit + '分</div>';
+      }
+      html += '</div>';
+      if (nextVol) html += '<div class="ds-next">あと' + (nextVol.kg - totalVol).toLocaleString() + ' kgで ' + nextVol.emoji + ' ' + nextVol.name + '1' + nextVol.unit + '分</div>';
+    }
+
+    el.innerHTML = html;
   }
 
   init();
