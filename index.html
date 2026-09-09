@@ -265,8 +265,10 @@
     .auth-header-btn-dark { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 5px 10px; font-size: 13px; color: rgba(240,238,234,0.55); cursor: pointer; font-family: inherit; }
     .auth-header-btn-dark.logged-in { background: rgba(124,111,255,0.15); border-color: rgba(124,111,255,0.4); color: #b0a8ff; font-size: 12px; }
   </style>
+<link rel="stylesheet" href="family-ux.css">
 </head>
 <body>
+<div class="family-bar"><a href="https://sase-apps.vercel.app/">‹ 佐瀬家ホーム</a><a href="https://sase-apps.vercel.app/#apps">アプリ一覧</a></div><p id="familyStatus" class="family-status" role="status"></p>
 <div class="page">
   <header class="app-header">
     <div class="app-title">💪 パパの筋トレ記録</div>
@@ -277,7 +279,8 @@
   </header>
 
   <!-- カレンダー -->
-  <div id="viewCalendar" class="view active">
+  <section class="workout-start"><div><h2>今日も、自分のペースで。</h2><p>前回の数値から、すぐに記録。</p></div><button type="button" onclick="openSheet(toDateStr(new Date()))">▶ 今日の記録</button></section>
+<div id="viewCalendar" class="view active">
     <div class="cal-nav">
       <button class="cal-nav-btn" onclick="calPrev()">‹</button>
       <div class="cal-month" id="calMonthLabel"></div>
@@ -361,7 +364,7 @@
   </div>
   <div class="sheet-body" id="sheetBody"></div>
   <div class="sheet-footer">
-    <div class="daily-summary" id="dailySummary"></div>
+    <details class="workout-summary"><summary>今日のがんばりを見る</summary><div class="daily-summary" id="dailySummary"></div></details>
     <button class="btn btn-primary" onclick="saveSession()">💾 保存する</button>
   </div>
 </div>
@@ -442,11 +445,16 @@
     btn.textContent = 'ログイン';
     if (error) { document.getElementById('loginError').textContent = 'パスワードが違います'; return; }
     isAuthenticated = true;
+    var sessionResult=await db.auth.getSession();
+    workoutOwner=sessionResult.data.session.user.id;
+    saveWorkoutDraft();
     closeLoginModal();
     updateAuthHeaderBtn();
   }
   async function signOut() {
+    saveWorkoutDraft();closeSheet();
     await db.auth.signOut();
+    workoutOwner='guest';
     isAuthenticated = false;
     updateAuthHeaderBtn();
   }
@@ -494,6 +502,8 @@
     var { data: { session } } = await db.auth.getSession();
     isAuthenticated = !!session;
     updateAuthHeaderBtn();
+    workoutOwner=session && session.user ? session.user.id : 'guest';
+    if(new URLSearchParams(location.search).get('action')==='start') await openSheet(toDateStr(new Date()));
   }
 
   // ===== EXERCISES =====
@@ -583,12 +593,13 @@
     }
 
     renderSheetBody(existingLogs, prevLogs, prevLevelupFlags);
+    restoreWorkoutDraft();
     updateSummary();
   }
 
   function renderSheetBody(existing, prev, levelupFlags) {
     levelupFlags = levelupFlags || {};
-    var html = '';
+    var html = '<div class="workout-tools"><p id="draftStatus" role="status">前回の数値を表示しています</p><button type="button" onclick="usePreviousWorkout()">前回値のある種目を選択</button><button type="button" onclick="startRestTimer(90)">休憩 90秒</button><button type="button" onclick="startRestTimer(120)">休憩 2分</button><button type="button" id="restTimer" onclick="stopRestTimer()" aria-label="休憩タイマーを停止" hidden></button><p class="ux-help">タイマーはこの画面で表示します。</p></div>';
     exercises.forEach(function(ex) {
       var log  = existing[ex.id];
       var last = prev[ex.id];
@@ -625,6 +636,13 @@
       html += '</div></div>';
     });
     document.getElementById('sheetBody').innerHTML = html;
+    if (Object.keys(existing).length) document.getElementById('draftStatus').textContent = '保存済みの記録を表示しています';
+    exercises.forEach(function(ex){document.getElementById('exrow-'+ex.id).dataset.previous=prev[ex.id]?'true':'false';});
+    document.querySelectorAll('#sheetBody input[type="number"]').forEach(function(input){
+      input.min='0';input.inputMode='decimal';
+      var wrapper=document.createElement('div');wrapper.className='number-stepper';input.parentNode.insertBefore(wrapper,input);wrapper.appendChild(input);
+      [-1,1].forEach(function(dir){var b=document.createElement('button');b.type='button';b.textContent=dir<0?'−':'＋';b.setAttribute('aria-label',(input.id.startsWith('kg-')?'重量':input.id.startsWith('reps-')?'回数':input.id.startsWith('sets-')?'セット数':'距離')+(dir<0?'を減らす':'を増やす'));b.onclick=function(){var step=Number(input.step)||1;input.value=String(Math.max(0,Math.round(((Number(input.value)||0)+dir*step)*100)/100));updateSummary();saveWorkoutDraft();};wrapper.appendChild(b);});
+    });
   }
 
   function toggleEx(exId) {
@@ -633,6 +651,7 @@
     var on  = row.classList.toggle('checked');
     inp.classList.toggle('open', on);
     updateSummary();
+    saveWorkoutDraft();
   }
 
   async function saveSession() {
@@ -655,6 +674,7 @@
           if (deleteSessionR.error) throw deleteSessionR.error;
           delete sessionDates[selectedDate];
         }
+        clearWorkoutDraft();
         closeSheet();
         renderCalendar();
         return;
@@ -712,6 +732,7 @@
         if (deleteLogsR.error) throw deleteLogsR.error;
       }
 
+      clearWorkoutDraft();
       closeSheet();
       renderCalendar();
     } catch (err) {
@@ -1098,6 +1119,36 @@
     el.innerHTML = html;
   }
 
+
+  var workoutOwner='guest', restTimerInterval=null, restEndsAt=0;
+  function workoutDraftKey(){return 'sase-workout-v1:'+workoutOwner+':'+selectedDate;}
+  function saveWorkoutDraft(){
+    if(!selectedDate || !document.getElementById('recordSheet').classList.contains('open'))return;
+    var rows={};exercises.forEach(function(ex){
+      var row=document.getElementById('exrow-'+ex.id);if(!row)return;
+      var values={checked:row.classList.contains('checked')};
+      ['kg','reps','sets','km','lu'].forEach(function(k){var e=document.getElementById(k+'-'+ex.id);if(e)values[k]=e.type==='checkbox'?e.checked:e.value;});rows[ex.id]=values;
+    });
+    try{localStorage.setItem(workoutDraftKey(),JSON.stringify({rows:rows,updatedAt:Date.now()}));document.getElementById('draftStatus').textContent='このiPhoneに下書き保存済み · 共有するには「保存する」';}
+    catch(e){document.getElementById('draftStatus').textContent='下書きを保存できません。「保存する」で記録してください。';}
+  }
+  function restoreWorkoutDraft(){
+    try{var draft=JSON.parse(localStorage.getItem(workoutDraftKey())||'null');if(!draft||!draft.rows)return;
+      exercises.forEach(function(ex){var v=draft.rows[ex.id];if(!v)return;
+        document.getElementById('exrow-'+ex.id).classList.toggle('checked',!!v.checked);document.getElementById('exinp-'+ex.id).classList.toggle('open',!!v.checked);
+        ['kg','reps','sets','km','lu'].forEach(function(k){var e=document.getElementById(k+'-'+ex.id);if(e && v[k]!==undefined){if(e.type==='checkbox')e.checked=!!v[k];else e.value=v[k];}});
+      });document.getElementById('draftStatus').textContent='途中の記録を復元しました · まだ共有保存されていません';
+    }catch(e){}
+  }
+  function clearWorkoutDraft(){try{localStorage.removeItem(workoutDraftKey());}catch(e){}}
+  function usePreviousWorkout(){
+    exercises.forEach(function(ex){var row=document.getElementById('exrow-'+ex.id);if(row.dataset.previous==='true'){row.classList.add('checked');document.getElementById('exinp-'+ex.id).classList.add('open');}});updateSummary();saveWorkoutDraft();
+  }
+  function stopRestTimer(){clearInterval(restTimerInterval);restTimerInterval=null;restEndsAt=0;var b=document.getElementById('restTimer');if(b)b.hidden=true;}
+  function startRestTimer(seconds){stopRestTimer();restEndsAt=Date.now()+seconds*1000;tickRestTimer();restTimerInterval=setInterval(tickRestTimer,250);}
+  function tickRestTimer(){var b=document.getElementById('restTimer');if(!b)return;var left=Math.max(0,Math.ceil((restEndsAt-Date.now())/1000));b.hidden=false;b.textContent=left?'残り '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0')+' · 停止':'休憩おわり ✓';if(!left){clearInterval(restTimerInterval);restTimerInterval=null;}}
+  document.getElementById('sheetBody').addEventListener('input',saveWorkoutDraft);
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')saveWorkoutDraft();else if(restEndsAt)tickRestTimer();});
   init();
 </script>
 
@@ -1119,5 +1170,6 @@
     <p class="muscle-login-error" id="loginError"></p>
   </div>
 </div>
+<script src="family-ux.js"></script>
 </body>
 </html>
